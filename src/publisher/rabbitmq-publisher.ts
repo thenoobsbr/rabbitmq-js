@@ -21,24 +21,21 @@ export class RabbitMqPublisher implements IRabbitMqPublisher {
             + (delay.milliseconds ?? 0)
     }
 
-    async publish({
-                      exchange,
-                      routingKey,
-                      data,
-                      options
-                  }: IRabbitMqMessage): Promise<void> {
+    async publish(...messages: IRabbitMqMessage[]): Promise<void> {
         const connection = await this.connectionFactory.getConnection()
         const confirmChannel = await connection.createConfirmChannel()
         try {
-            const enqueued = confirmChannel.publish(
-                exchange,
-                routingKey,
-                new Buffer(this.serializer.serialize(data)),
-                options
-            )
+            for (const message of messages) {
+                const enqueued = confirmChannel.publish(
+                    message.exchange,
+                    message.routingKey,
+                    new Buffer(this.serializer.serialize(message.data)),
+                    message.options
+                )
 
-            if (!enqueued) {
-                throw new Error('Failed to publish message')
+                if (!enqueued) {
+                    throw new Error('Failed to publish message')
+                }
             }
 
             await confirmChannel.waitForConfirms()
