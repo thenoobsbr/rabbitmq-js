@@ -1,5 +1,5 @@
-﻿import {Connection} from "amqplib";
+﻿import { Connection } from 'amqplib'
 
 export interface IRabbitMqConnectionFactory {
-    getConnection(): Promise<Connection>
+  getConnection(): Promise<Connection>
 }
