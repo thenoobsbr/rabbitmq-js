@@ -14,6 +14,7 @@ import { RabbitMqSubscription } from './subscription'
 
 export class RabbitMqConnection implements IRabbitMqConnection, IRabbitMqConnectionFactory {
   private connection: Connection | undefined
+  private readonly publishers: IRabbitMqPublisher[] = []
   private readonly subscriptions: IRabbitMqSubscription[] = []
 
   constructor(private readonly options: IRabbitMqConnectionOptions,
@@ -22,7 +23,9 @@ export class RabbitMqConnection implements IRabbitMqConnection, IRabbitMqConnect
   }
 
   getPublisher(): IRabbitMqPublisher {
-    return new RabbitMqPublisher(this, this.serializer, this.logger)
+    const publisher = new RabbitMqPublisher(this, this.serializer, this.logger)
+    this.publishers.push(publisher)
+    return publisher
   }
 
   subscribe(options: IRabbitMqSubscribe) {
@@ -43,8 +46,17 @@ export class RabbitMqConnection implements IRabbitMqConnection, IRabbitMqConnect
         this.logger?.error({ message: 'Failed to stop subscription', error })
       }
     }
+
+    for (const publisher of this.publishers) {
+      try {
+        await publisher.close()
+      } catch (error: Error | any) {
+        this.logger?.error({ message: 'Failed to stop publisher', error })
+      }
+    }
+    
     try {
-      await this.connection?.removeAllListeners()
+      this.connection?.removeAllListeners()
       await this.connection?.close()
     } catch (error: Error | any) {
       this.logger?.error({ message: 'Failed to close connection', error })

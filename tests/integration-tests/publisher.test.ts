@@ -1,6 +1,7 @@
 ﻿import { IRabbitMqPublisher, IRabbitMqSerializer, RabbitMqConnection } from '../../src'
 import { randomUUID } from 'node:crypto'
 import { GenericContainer, StartedTestContainer } from 'testcontainers'
+import { Task } from '../../src/extensions'
 
 describe('RabbitMqPublisher', () => {
   let rabbitmq: StartedTestContainer
@@ -87,7 +88,7 @@ describe('RabbitMqPublisher', () => {
       expect(queueStatus).not.toBeNull()
       expect(queueStatus.messageCount).toBe(0)
 
-      await new Promise(resolve => setTimeout(resolve, 1000 * 2))
+      await Task.delay({ seconds: 2 })
 
       queueStatus = await channel.checkQueue(queue)
       expect(queueStatus).not.toBeNull()

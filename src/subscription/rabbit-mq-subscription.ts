@@ -1,4 +1,4 @@
-﻿import { IRabbitMqConnectionFactory } from '../extensions'
+﻿import { IRabbitMqConnectionFactory, Task } from '../extensions'
 import {
   IRabbitMqLogger,
   IRabbitMqPublisher,
@@ -155,7 +155,7 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
           message: 'Failed to recover subscription channel',
           error,
         })
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        await Task.delay({ seconds: 1 })
       }
     } while (!this.channel)
   }

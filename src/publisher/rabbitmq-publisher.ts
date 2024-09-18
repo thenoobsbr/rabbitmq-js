@@ -6,10 +6,12 @@
   IRabbitMqSerializer,
   TimeSpan,
 } from '../types'
-import { IRabbitMqConnectionFactory } from '../extensions'
+import { IRabbitMqConnectionFactory, Task } from '../extensions'
 import { PublishFailedError } from '../errors'
 
 export class RabbitMqPublisher implements IRabbitMqPublisher {
+  private isClosed = false
+  private isPublishing = false
   private readonly existingExchanges: Set<string> = new Set()
   private readonly existingQueues: Set<string> = new Set()
 
@@ -20,7 +22,11 @@ export class RabbitMqPublisher implements IRabbitMqPublisher {
   }
 
   async publish(...messages: IRabbitMqMessage[]): Promise<boolean> {
+    this.isPublishing = true
     try {
+      if (this.isClosed) {
+        return false
+      }
       const connection = await this.connectionFactory.getConnection()
       const confirmChannel = await connection.createConfirmChannel()
       for (const message of messages) {
@@ -73,6 +79,8 @@ export class RabbitMqPublisher implements IRabbitMqPublisher {
     } catch (error: Error | any) {
       this.logger?.error({ message: 'Failed to publish message', error })
       return false
+    } finally {
+      this.isPublishing = false
     }
   }
 
@@ -84,6 +92,10 @@ export class RabbitMqPublisher implements IRabbitMqPublisher {
                    delay,
                    queue,
                  }: IRabbitMqScheduledMessage): Promise<boolean> {
+    if (this.isClosed) {
+      return false
+    }
+
     if (queue?.name && routingKey != queue.name) {
       throw new PublishFailedError('The queue name must match the routing key')
     }
@@ -125,5 +137,14 @@ export class RabbitMqPublisher implements IRabbitMqPublisher {
       this.logger?.error({ message: 'Failed to schedule message', error })
       return false
     }
+  }
+
+  async close() {
+    this.isClosed = true
+    while (this.isPublishing) {
+      await Task.delay({ milliseconds: 300 })
+    }
+    this.existingExchanges.clear()
+    this.existingQueues.clear()
   }
 }
