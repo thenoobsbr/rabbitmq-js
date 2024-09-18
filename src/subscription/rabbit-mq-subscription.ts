@@ -17,7 +17,7 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
               private readonly serializer: IRabbitMqSerializer,
               private readonly options: IRabbitMqSubscribe,
               private readonly publisher: IRabbitMqPublisher,
-              private readonly logger: IRabbitMqLogger) {
+              private readonly logger?: IRabbitMqLogger) {
   }
 
   async start(): Promise<boolean> {
@@ -32,7 +32,7 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
       })
       return true
     } catch (error: Error | any) {
-      this.logger.error({ message: 'Failed to subscribe', error })
+      this.logger?.error({ message: 'Failed to subscribe', error })
       this.channel = undefined
       return false
     }
@@ -49,6 +49,10 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
 
   private async processMessage(message: Message): Promise<void> {
     const attempt = message.properties.headers?.attempt ?? 1
+    const traceId = message.properties.headers?.traceId
+    if (traceId) {
+      this.logger?.setTraceId(traceId)
+    }
     const channel = await this.getChannel()
     try {
       await this.options.callback({
@@ -59,7 +63,7 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
       })
       this.channel?.ack(message, false)
     } catch (error: Error | any) {
-      this.logger.error({
+      this.logger?.error({
         message: 'Failed to process message',
         error,
       })
@@ -70,7 +74,7 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
 
         channel.nack(message, false, false)
       } catch (error: Error | any) {
-        this.logger.error({
+        this.logger?.error({
           message: 'Failed process retry',
           error,
         })
@@ -83,13 +87,19 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
 
   private async publishToDlq(message: Message): Promise<void> {
     const dlq = `${this.options.queue}.dlq`
-    await this.channel?.assertQueue(dlq, {
-      durable: true,
-    })
     await this.publisher.publish({
-      exchange: '',
+      exchange: {
+        name: '',
+      },
       routingKey: `${this.options.queue}.dlq`,
       data: message.content,
+      queue: {
+        name: dlq,
+        options: {
+          durable: true,
+          assert: true,
+        },
+      },
       options: {
         ...message.properties,
         expiration: undefined,
@@ -101,7 +111,9 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
   private async scheduleAttempt(message: Message, attempt: number): Promise<void> {
     const delay = this.options.retryBehavior.getDelay(attempt)
     await this.publisher.schedule({
-      exchange: '',
+      exchange: {
+        name: '',
+      },
       routingKey: this.options.queue,
       data: message.content,
       options: {
@@ -127,7 +139,7 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
   }
 
   private async onChannelError(error: Error): Promise<void> {
-    this.logger.error({
+    this.logger?.error({
       message: 'Channel failed',
       error,
     })
@@ -139,7 +151,7 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
       try {
         await this.start()
       } catch (error: Error | any) {
-        this.logger.error({
+        this.logger?.error({
           message: 'Failed to recover subscription channel',
           error,
         })

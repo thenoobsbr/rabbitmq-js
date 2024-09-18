@@ -1,7 +1,7 @@
-﻿import { IRabbitMqRetryBehavior, IRabbitMqSubscriberMessage } from '../subscription'
+﻿import { IRabbitMqRetryBehavior, IRabbitMqSubscriptionMessage } from '../types'
 import { InstantiateType } from './instantiate-type'
 
-export type RabbitMqSubscriberCallback = <T>(message: IRabbitMqSubscriberMessage<T>) => Promise<void>
+export type RabbitMqSubscriberCallback = <T>(message: IRabbitMqSubscriptionMessage<T>) => Promise<void>
 
 export interface IRabbitMqSubscribe {
   readonly queue: string

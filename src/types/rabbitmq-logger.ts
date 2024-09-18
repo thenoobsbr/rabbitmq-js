@@ -4,5 +4,9 @@
 }
 
 export interface IRabbitMqLogger {
+  readonly traceId: string
+
+  setTraceId(traceId: string): void
+
   error(message: IRabbitMqErrorMessage): void
 }

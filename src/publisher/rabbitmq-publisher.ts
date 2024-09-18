@@ -4,24 +4,19 @@
   IRabbitMqPublisher,
   IRabbitMqScheduledMessage,
   IRabbitMqSerializer,
-  ITimeSpan,
+  TimeSpan,
 } from '../types'
 import { IRabbitMqConnectionFactory } from '../extensions'
 import { PublishFailedError } from '../errors'
 
 export class RabbitMqPublisher implements IRabbitMqPublisher {
+  private readonly existingExchanges: Set<string> = new Set()
+  private readonly existingQueues: Set<string> = new Set()
+
   constructor(
     private readonly connectionFactory: IRabbitMqConnectionFactory,
     private readonly serializer: IRabbitMqSerializer,
-    private readonly logger: IRabbitMqLogger) {
-  }
-
-  private static calculateDelayInMilliseconds(delay: ITimeSpan) {
-    return (delay.days ?? 0) * 24 * 60 * 60 * 1000
-      + (delay.hours ?? 0) * 60 * 60 * 1000
-      + (delay.minutes ?? 0) * 60 * 1000
-      + (delay.seconds ?? 0) * 1000
-      + (delay.milliseconds ?? 0)
+    private readonly logger?: IRabbitMqLogger) {
   }
 
   async publish(...messages: IRabbitMqMessage[]): Promise<boolean> {
@@ -29,30 +24,54 @@ export class RabbitMqPublisher implements IRabbitMqPublisher {
       const connection = await this.connectionFactory.getConnection()
       const confirmChannel = await connection.createConfirmChannel()
       for (const message of messages) {
+        if (message.exchange.options?.assert &&
+          !this.existingExchanges.has(message.exchange.name)) {
+          await confirmChannel.assertExchange(
+            message.exchange.name,
+            message.exchange.options.type,
+            message.exchange.options)
+        }
+
+        if (message.queue?.options?.assert &&
+          !this.existingQueues.has(message.queue.name)) {
+          await confirmChannel.assertQueue(message.queue.name, message.queue.options)
+        }
+
         const data = message.data instanceof Buffer
           ? message.data
           : Buffer.from(this.serializer.serialize(message.data))
         const enqueued = confirmChannel.publish(
-          message.exchange,
+          message.exchange.name,
           message.routingKey,
           data,
-          message.options,
+          {
+            ...message.options,
+            headers: {
+              ...message.options?.headers,
+              traceId: this.logger?.traceId,
+            },
+          },
         )
 
         if (!enqueued) {
           const error = new PublishFailedError('Failed to publish message')
-          this.logger.error({
+          this.logger?.error({
             message: 'Failed to publish message',
             error,
           })
           return false
+        }
+
+        this.existingExchanges.add(message.exchange.name)
+        if (message.queue?.name) {
+          this.existingQueues.add(message.queue.name)
         }
       }
 
       await confirmChannel.waitForConfirms()
       return true
     } catch (error: Error | any) {
-      this.logger.error({ message: 'Failed to publish message', error })
+      this.logger?.error({ message: 'Failed to publish message', error })
       return false
     }
   }
@@ -63,26 +82,36 @@ export class RabbitMqPublisher implements IRabbitMqPublisher {
                    data,
                    options,
                    delay,
+                   queue,
                  }: IRabbitMqScheduledMessage): Promise<boolean> {
-    const connection = await this.connectionFactory.getConnection()
-    try {
-      const channel = await connection.createConfirmChannel()
-      try {
-        await channel.checkQueue(routingKey)
-        const schedulerQueue = `${routingKey}.scheduler`
-        await channel.assertQueue(schedulerQueue, {
-          durable: true,
-          deadLetterExchange: '',
-          deadLetterRoutingKey: routingKey,
-          autoDelete: true,
-        })
-        await channel.waitForConfirms()
+    if (queue?.name && routingKey != queue.name) {
+      throw new PublishFailedError('The queue name must match the routing key')
+    }
 
-        const delayInMilliseconds = RabbitMqPublisher.calculateDelayInMilliseconds(delay)
+    try {
+      const connection = await this.connectionFactory.getConnection()
+      const channel = await connection.createChannel()
+      try {
+        if (queue?.options?.assert &&
+          !this.existingQueues.has(queue.name)) {
+          await channel.assertQueue(queue.name, queue.options)
+          this.existingQueues.add(queue.name)
+        }
+        const schedulerQueue = `${routingKey}.scheduler`
+        const delayInMilliseconds = TimeSpan.getTotalMilliseconds(delay)
         return await this.publish({
           exchange,
           routingKey: schedulerQueue,
           data,
+          queue: {
+            name: schedulerQueue,
+            options: {
+              durable: true,
+              assert: true,
+              deadLetterExchange: '',
+              deadLetterRoutingKey: routingKey,
+            },
+          },
           options: {
             ...options,
             persistent: true,
@@ -93,7 +122,7 @@ export class RabbitMqPublisher implements IRabbitMqPublisher {
         await channel.close()
       }
     } catch (error: Error | any) {
-      this.logger.error({ message: 'Failed to schedule message', error })
+      this.logger?.error({ message: 'Failed to schedule message', error })
       return false
     }
   }

@@ -7,6 +7,7 @@ const config: Config = {
   transform: {
     '^.+\\.[tj]sx?$': 'ts-jest',
   },
+  testTimeout: 30000,
 }
 
 export default config

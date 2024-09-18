@@ -6,4 +6,6 @@ export interface IRabbitMqConnection {
   getPublisher(): IRabbitMqPublisher
 
   subscribe(options: IRabbitMqSubscribe): IRabbitMqSubscription
+
+  close(): Promise<void>
 }

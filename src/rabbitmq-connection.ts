@@ -7,16 +7,18 @@ import {
   IRabbitMqPublisher,
   IRabbitMqSerializer,
   IRabbitMqSubscribe,
+  IRabbitMqSubscription,
 } from './types'
 import { RabbitMqPublisher } from './publisher'
 import { RabbitMqSubscription } from './subscription'
 
 export class RabbitMqConnection implements IRabbitMqConnection, IRabbitMqConnectionFactory {
   private connection: Connection | undefined
+  private readonly subscriptions: IRabbitMqSubscription[] = []
 
   constructor(private readonly options: IRabbitMqConnectionOptions,
               private readonly serializer: IRabbitMqSerializer,
-              private readonly logger: IRabbitMqLogger) {
+              private readonly logger?: IRabbitMqLogger) {
   }
 
   getPublisher(): IRabbitMqPublisher {
@@ -24,11 +26,29 @@ export class RabbitMqConnection implements IRabbitMqConnection, IRabbitMqConnect
   }
 
   subscribe(options: IRabbitMqSubscribe) {
-    return new RabbitMqSubscription(this,
+    const subscription = new RabbitMqSubscription(this,
       this.serializer,
       options,
       this.getPublisher(),
       this.logger)
+    this.subscriptions.push(subscription)
+    return subscription
+  }
+
+  async close(): Promise<void> {
+    for (const subscription of this.subscriptions) {
+      try {
+        await subscription.stop()
+      } catch (error: Error | any) {
+        this.logger?.error({ message: 'Failed to stop subscription', error })
+      }
+    }
+    try {
+      await this.connection?.removeAllListeners()
+      await this.connection?.close()
+    } catch (error: Error | any) {
+      this.logger?.error({ message: 'Failed to close connection', error })
+    }
   }
 
   async getConnection(): Promise<Connection> {
@@ -48,15 +68,17 @@ export class RabbitMqConnection implements IRabbitMqConnection, IRabbitMqConnect
       connection.on('close', this.onConnectionError.bind(this))
       return connection
     } catch (error: Error | any) {
-      this.logger.error({ message: 'Failed to open connection', error })
+      this.logger?.error({ message: 'Failed to open connection', error })
       throw error
     }
   }
 
   private onConnectionError(error: Error) {
-    console.error(error)
+    this.logger?.error({
+      message: 'Connection closed',
+      error,
+    })
     this.connection?.removeAllListeners()
     this.connection = undefined
-    this.logger.error({ message: 'Connection failed', error })
   }
 }

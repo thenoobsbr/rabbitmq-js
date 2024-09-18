@@ -1,7 +1,12 @@
-﻿import { IRabbitMqRetryBehavior, ITimeSpan } from '../types'
+﻿import { IRabbitMqRetryBehavior, ITimeSpan, TimeSpan } from '../types'
 
 export class RabbitMqLinearRetryBehavior implements IRabbitMqRetryBehavior {
-  constructor(private readonly maxAttempts: number = 3) {
+  constructor(
+    private readonly maxAttempts: number = 10,
+    private readonly delayCoefficient: number = 5,
+    private readonly maxDelay: ITimeSpan = {
+      seconds: 30,
+    }) {
   }
 
   canRetry(attempt: number): boolean {
@@ -9,8 +14,8 @@ export class RabbitMqLinearRetryBehavior implements IRabbitMqRetryBehavior {
   }
 
   getDelay(attempt: number): ITimeSpan {
-    return {
-      seconds: 5 * attempt,
-    }
+    return TimeSpan.min(this.maxDelay, {
+      seconds: attempt * this.delayCoefficient,
+    })
   }
 }
