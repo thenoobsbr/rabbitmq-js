@@ -10,6 +10,8 @@ import { ConfirmChannel, Message, Replies } from 'amqplib'
 import Consume = Replies.Consume
 
 export class RabbitMqSubscription implements IRabbitMqSubscription {
+  private isClosed = false
+  private isProcessing = false
   private channel: ConfirmChannel | undefined
   private subscription: Consume | undefined
 
@@ -24,11 +26,28 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
     try {
       const channel = await this.getChannel()
       await channel.prefetch(this.options.prefetch)
-      this.subscription = await channel.consume(this.options.queue, (message) => {
-        if (!message) {
-          return
+
+      if (this.options.exchange?.options?.assert) {
+        await channel.assertExchange(
+          this.options.exchange.name,
+          this.options.exchange.options.type,
+          this.options.exchange.options)
+      }
+
+      if (this.options.queue?.options?.assert) {
+        await channel.assertQueue(this.options.queue.name, this.options.queue.options)
+      }
+
+      this.subscription = await channel.consume(this.options.queue.name, (message) => {
+        this.isProcessing = true
+        try {
+          if (!message) {
+            return
+          }
+          return this.processMessage(message)
+        } finally {
+          this.isProcessing = false
         }
-        return this.processMessage(message)
       })
       return true
     } catch (error: Error | any) {
@@ -39,9 +58,19 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
   }
 
   async stop(): Promise<void> {
+    this.isClosed = true
+
     if (this.subscription) {
       await this.channel?.cancel(this.subscription.consumerTag)
     }
+
+    while (this.isProcessing) {
+      await Task.delay({ milliseconds: 300 })
+    }
+
+    this.channel?.nackAll(true)
+    await this.channel?.waitForConfirms()
+
     this.channel?.removeAllListeners()
     await this.channel?.close()
     this.channel = undefined
@@ -55,6 +84,11 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
     }
     const channel = await this.getChannel()
     try {
+      if (this.isClosed) {
+        channel.nackAll(true)
+        await channel.waitForConfirms()
+        return
+      }
       await this.options.callback({
         attempt,
         fields: message.fields,
@@ -85,13 +119,13 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
     }
   }
 
-  private async publishToDlq(message: Message): Promise<void> {
-    const dlq = `${this.options.queue}.dlq`
-    await this.publisher.publish({
+  private publishToDlq(message: Message): Promise<boolean> {
+    const dlq = `${this.options.queue.name}.dlq`
+    return this.publisher.publish({
       exchange: {
         name: '',
       },
-      routingKey: `${this.options.queue}.dlq`,
+      routingKey: dlq,
       data: message.content,
       queue: {
         name: dlq,
@@ -109,12 +143,12 @@ export class RabbitMqSubscription implements IRabbitMqSubscription {
   }
 
   private async scheduleAttempt(message: Message, attempt: number): Promise<void> {
-    const delay = this.options.retryBehavior.getDelay(attempt)
+    const delay = this.options.retryBehavior!.getDelay(attempt)
     await this.publisher.schedule({
       exchange: {
         name: '',
       },
-      routingKey: this.options.queue,
+      routingKey: this.options.queue.name,
       data: message.content,
       options: {
         ...message.properties,

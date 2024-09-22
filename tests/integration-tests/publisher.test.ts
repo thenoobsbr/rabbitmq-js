@@ -26,6 +26,7 @@ describe('RabbitMqPublisher', () => {
   })
 
   afterAll(async () => {
+    await connection?.close()
     await rabbitmq?.stop()
   })
 
